@@ -1,41 +1,153 @@
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.enums import ChatMemberStatus
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import threading
 
-TOKEN = "8083632977:AAGAREk7wP9Xo1EWF5mEQBmgTCXAygAKRuM"
+TOKEN = "8132249695:AAGXBuNoqXTDCsuyGCzVCANtS5SWRy2hWsI"
+CHANNEL_ID = -1002696090717   # آیدی کانال
+ADMIN_ID = 7796569566
+DELETE_DELAY = 20  # ثانیه
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+bot = telebot.TeleBot(TOKEN)
 
+# ---------- حذف خودکار ----------
+def delete_message_safe(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
 
-# قبول خودکار جوین ریکوئست
-@dp.chat_join_request()
-async def approve_join_request(event: types.ChatJoinRequest):
-    await bot.approve_chat_join_request(
-        chat_id=event.chat.id,
-        user_id=event.from_user.id
-    )
-    print(f"Approved: {event.from_user.id}")
+def send_user_message(chat_id, text, reply_markup=None):
+    msg = bot.send_message(chat_id, text, reply_markup=reply_markup)
+    threading.Timer(
+        DELETE_DELAY,
+        lambda: delete_message_safe(chat_id, msg.message_id)
+    ).start()
 
+# ---------- /start ----------
+@bot.message_handler(commands=['start'])
+def start_message(message):
 
-# بن بعد از لفت
-@dp.chat_member()
-async def ban_after_leave(event: types.ChatMemberUpdated):
-    old_status = event.old_chat_member.status
-    new_status = event.new_chat_member.status
+    user_id = message.from_user.id
+    user_name = message.from_user.username or message.from_user.first_name
 
-    if old_status in [ChatMemberStatus.MEMBER,
-                      ChatMemberStatus.RESTRICTED] and \
-       new_status == ChatMemberStatus.LEFT:
+    try:
+        member = bot.get_chat_member(CHANNEL_ID, user_id)
+        status = member.status
+    except:
+        status = "left"
 
-        await bot.ban_chat_member(
-            chat_id=event.chat.id,
-            user_id=event.from_user.id
+    # ---------- عضو بود ----------
+    if status in ["member", "administrator", "creator"]:
+
+        send_user_message(
+            user_id,
+            "✅ شما عضو کانال هستید"
         )
-        print(f"Banned: {event.from_user.id}")
 
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton(
+                "🚫 بن کردن کاربر از کانال",
+                callback_data=f"ban_{user_id}"
+            )
+        )
 
-async def main():
-    await dp.start_polling(bot)
+        bot.send_message(
+            ADMIN_ID,
+            f"✅ کاربر استارت زد و عضو کانال است\n\n"
+            f"👤 نام: {user_name}\n"
+            f"🆔 آیدی: {user_id}",
+            reply_markup=keyboard
+        )
 
-asyncio.run(main())
+    # ---------- عضو نبود ----------
+    else:
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton(
+                "📢 عضویت در کانال",
+                url="https://t.me/+-WPMFiNRJMZmZTRk"
+            )
+        )
+
+        send_user_message(
+            user_id,
+            "برای عضویت در چنل رو دکمه زیر کلیک کنید🤖",
+            reply_markup=keyboard
+        )
+
+# ---------- هندلر لف ----------
+@bot.chat_member_handler()
+def handle_left_member(update):
+
+    if update.chat.id != CHANNEL_ID:
+        return
+
+    user = update.new_chat_member.user
+    user_id = user.id
+    user_name = user.username or user.first_name
+
+    old_status = update.old_chat_member.status
+    new_status = update.new_chat_member.status
+
+    # اگر لف داد
+    if old_status in ["member", "administrator", "creator"] and new_status == "left":
+
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton(
+                "🚫 بن کردن کاربر از کانال",
+                callback_data=f"ban_{user_id}"
+            )
+        )
+
+        bot.send_message(
+            ADMIN_ID,
+            f"⚠️ کاربر از کانال لف داد\n\n"
+            f"👤 نام: {user_name}\n"
+            f"🆔 آیدی: {user_id}",
+            reply_markup=keyboard
+        )
+
+# ---------- بن ----------
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ban_"))
+def ban_user(call):
+
+    user_id = int(call.data.split("_")[1])
+
+    try:
+        bot.ban_chat_member(CHANNEL_ID, user_id)
+
+        bot.answer_callback_query(
+            call.id,
+            "✅ کاربر بن شد"
+        )
+
+        bot.send_message(
+            call.message.chat.id,
+            f"🚫 کاربر {user_id} بن شد."
+        )
+
+    except Exception as e:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ خطا در بن"
+        )
+
+        bot.send_message(
+            call.message.chat.id,
+            f"خطا:\n{e}"
+        )
+
+print("Bot Running ...")
+
+bot.infinity_polling(
+    skip_pending=True,
+    allowed_updates=[
+        "message",
+        "callback_query",
+        "chat_member"
+    ]
+)
